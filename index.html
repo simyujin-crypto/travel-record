@@ -19,8 +19,8 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{border-bottom:1px
 .gal{display:flex;flex-wrap:wrap;gap:8px}.gal div{width:120px;font-size:11px}
 .gal img,.gal video{width:120px;height:90px;object-fit:cover;border-radius:6px}
 .gal .off{opacity:.3}
-#show{position:fixed;inset:0;background:#000;z-index:3000;color:#fff;text-align:center}
-#show img{max-width:100%;max-height:88vh;margin-top:3vh}
+#show{position:fixed;inset:0;background:#000;z-index:3000;color:#fff;text-align:center;display:flex;align-items:center;justify-content:center;overflow:hidden}
+#show img,#show video{max-width:100%;max-height:88vh}
 #cap{position:fixed;bottom:12px;width:100%;font-size:18px}
 </style></head><body><div class="wrap">
 <div id="setup" class="card"><h2>나의 여행 및 등산 기록지</h2>
@@ -38,12 +38,12 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{border-bottom:1px
 <div id="main" class="hide">
 <div class="card"><h1 id="h" onclick="play()"></h1><div id="sub" style="color:#555;margin-top:4px"></div>
 <div style="margin-top:8px"><button onclick="play()">▶ 슬라이드쇼</button><button class="g" onclick="rec()">🎬 영상으로 저장(webm)</button><button class="g" onclick="location.reload()">처음으로</button></div><div id="msg" style="font-size:13px;color:#a60"></div></div>
-<div id="map"></div>
+<div id="map"></div><div id="nl" style="margin-top:8px"></div>
 <div class="card" style="margin-top:14px"><h3>전체 일정표</h3><div style="overflow-x:auto"><table id="tb"></table></div></div>
 </div></div>
 
 <div id="ov" class="ov hide" onclick="if(event.target==this)this.classList.add('hide')"><div class="in" id="oin"></div></div>
-<div id="show" class="hide"><div style="position:absolute;right:12px;top:8px;font-size:28px;cursor:pointer" onclick="stop()">✕</div><img id="si"><div id="cap"></div></div>
+<div id="show" class="hide"><div style="position:absolute;right:12px;top:8px;font-size:28px;cursor:pointer" onclick="stop()">✕</div><img id="si" class="hide"><video id="sv" class="hide" muted playsinline></video><div id="cap"></div></div>
 <audio id="au" loop></audio>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -55,6 +55,8 @@ const fmtT=t=>new Date(t).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-d
 const fmtD=t=>new Date(t).toLocaleDateString('ko-KR',{month:'long',day:'numeric',weekday:'short'});
 function dist(a,b){const R=6371000,r=Math.PI/180,dl=(b.lat-a.lat)*r,dn=(b.lng-a.lng)*r;
  const x=Math.sin(dl/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dn/2)**2;return 2*R*Math.asin(Math.sqrt(x));}
+let pick=null,tok=0;
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function build(){
  const fs=[...$('files').files];if(!fs.length){alert('사진을 선택하세요');return}
  $('setup').classList.add('hide');$('main').classList.remove('hide');$('msg').textContent='사진 정보 읽는 중...';
@@ -62,73 +64,102 @@ async function build(){
  if($('music').files[0])$('au').src=URL.createObjectURL($('music').files[0]);
  items=[];
  for(const f of fs){const it={file:f,url:URL.createObjectURL(f),video:f.type.startsWith('video'),t:f.lastModified,keep:true};
+  const m=f.name.match(/(20\d\d)(\d\d)(\d\d)[_-]?(\d\d)(\d\d)(\d\d)/);if(m)it.t=+new Date(m[1],m[2]-1,m[3],m[4],m[5],m[6]);
   if(!it.video){try{const e=await exifr.parse(f,{gps:true,pick:['DateTimeOriginal','CreateDate','GPSAltitude']});
    if(e){const d=e.DateTimeOriginal||e.CreateDate;if(d)it.t=+new Date(d);if(e.latitude!=null){it.lat=e.latitude;it.lng=e.longitude;it.alt=e.GPSAltitude}}}catch(_){}}
-  items.push(it);}
- items.sort((a,b)=>a.t-b.t);places=[];let cur=null,pend=[];
- for(const it of items){
-  if(it.lat!=null){if(cur&&dist(cur,it)<400){cur.items.push(it)}else{cur={lat:it.lat,lng:it.lng,items:[it],name:'장소',ele:null};places.push(cur)}
-   it.place=cur;it.place.lat=cur.items.reduce((s,x)=>s+(x.lat??cur.lat),0)/cur.items.length;it.place.lng=cur.items.reduce((s,x)=>s+(x.lng??cur.lng),0)/cur.items.length;
-   if(pend.length){pend.forEach(p=>{cur.items.push(p);p.place=cur});pend=[]}}
-  else if(cur){cur.items.push(it);it.place=cur}else pend.push(it)}
- if(pend.length&&places.length){pend.forEach(p=>{places[0].items.unshift(p);p.place=places[0]})}
- if(!places.length){$('msg').textContent='GPS 정보가 있는 사진이 없습니다.';return}
- render();await names();
+  items.push(it)}
+ items.sort((a,b)=>a.t-b.t);places=[];let cur=null;
+ for(const it of items){const gp=it.lat!=null;
+  const near=cur&&(gp?(cur.hasGps&&dist(cur,it)<400):(it.t-cur.last<5400000));
+  if(!near){cur={lat:gp?it.lat:null,lng:gp?it.lng:null,items:[],name:gp?'장소':'위치 미상',ele:null,hasGps:gp};places.push(cur)}
+  cur.items.push(it);it.place=cur;cur.last=it.t;if(gp&&!cur.hasGps){cur.hasGps=1;cur.lat=it.lat;cur.lng=it.lng}}
+ places.forEach(p=>{const g=p.items.filter(x=>x.lat!=null);if(g.length){p.lat=g.reduce((s,x)=>s+x.lat,0)/g.length;p.lng=g.reduce((s,x)=>s+x.lng,0)/g.length}});
+ render();hint();await names();hint();
 }
-async function names(){
- for(const p of places){
-  try{const r=await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&zoom=17&accept-language=ko&lat=${p.lat}&lon=${p.lng}`);const d=await r.json();
-   const a=d.address||{};p.name=d.name||a.tourism||a.natural||a.leisure||a.amenity||a.road||a.suburb||(d.display_name||'').split(',')[0]||'장소';}catch(_){}
-  try{const r=await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${p.lat}&longitude=${p.lng}`);p.ele=Math.round((await r.json()).elevation[0]);}catch(_){
-   const al=p.items.map(i=>i.alt).filter(x=>x!=null);if(al.length)p.ele=Math.round(al.reduce((a,b)=>a+b)/al.length)}
-  render();await new Promise(r=>setTimeout(r,1100));}
- $('msg').textContent='';
-}
+function hint(){const n=items.filter(x=>x.lat==null).length;
+ $('msg').textContent=n?`위치정보 없는 파일 ${n}개 (시간순으로 묶었습니다). 아래 '위치 지정' 버튼 → 지도 탭으로 직접 위치를 지정할 수 있어요. 원본 GPS를 쓰려면 안드로이드는 사진 선택 시 '파일/문서'로 고르세요.`:''}
+async function locate(p){
+ try{const r=await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&zoom=17&accept-language=ko&lat=${p.lat}&lon=${p.lng}`);const d=await r.json();const a=d.address||{};
+  p.name=d.name||a.tourism||a.natural||a.leisure||a.amenity||a.road||a.suburb||(d.display_name||'').split(',')[0]||'장소'}catch(_){}
+ try{const r=await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${p.lat}&longitude=${p.lng}`);p.ele=Math.round((await r.json()).elevation[0])}catch(_){
+  const al=p.items.map(i=>i.alt).filter(x=>x!=null);if(al.length)p.ele=Math.round(al.reduce((a,b)=>a+b)/al.length)}}
+async function names(){for(const p of places){if(p.lat==null||p.done)continue;p.done=1;await locate(p);render();await sleep(1100)}}
 const isMt=p=>p.ele!=null&&(p.ele>=150||/산|봉|岳|산장/.test(p.name));
 function render(){
- const t=$('title').value;$('h').textContent='📖 '+t;
+ $('h').textContent='📖 '+$('title').value;
  const m=$('mates').value.split(/[,，、\s]+/).filter(Boolean);
  $('sub').textContent=`${$('date').value} · ${$('dur').value} · 동반 ${m.length}명${m.length?'('+m.join(', ')+')':''} · 출발: ${$('dep').value} · 숙박: ${$('stay').value}`;
- if(!map){map=L.map('map');L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap',maxZoom:19}).addTo(map)}
+ if(!map){map=L.map('map').setView([36.5,127.8],7);L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap',maxZoom:19}).addTo(map);
+  map.on('click',async e=>{if(pick==null)return;const p=places[pick];pick=null;p.lat=e.latlng.lat;p.lng=e.latlng.lng;p.hasGps=1;p.done=1;p.items.forEach(x=>{x.lat=p.lat;x.lng=p.lng});
+   $('msg').textContent='장소 확인 중...';await locate(p);render();hint()})}
  if(map._g)map._g.remove();const g=L.layerGroup().addTo(map);map._g=g;
- L.polyline(places.map(p=>[p.lat,p.lng]),{color:'#d33',weight:3,dashArray:'6'}).addTo(g);
- places.forEach((p,i)=>{const im=p.items.filter(x=>!x.video&&x.keep),vd=p.items.filter(x=>x.video&&x.keep);
+ const pts=places.filter(p=>p.lat!=null);
+ L.polyline(pts.map(p=>[p.lat,p.lng]),{color:'#d33',weight:3,dashArray:'6'}).addTo(g);
+ places.forEach((p,i)=>{if(p.lat==null)return;const im=p.items.filter(x=>!x.video&&x.keep),vd=p.items.filter(x=>x.video&&x.keep);
   const th=im.slice(0,3).map(x=>`<img src="${x.url}">`).join('');
   const el=isMt(p)?`<span>⛰ 해발 ${p.ele}m</span>`:'';
   const ic=L.divIcon({className:'',html:`<div class="mk"><div style="font-size:10px">${i+1}. 사진${im.length}·영상${vd.length}</div><div class="tn">${th}</div>${el}</div>`,iconSize:null,iconAnchor:[40,20]});
   L.marker([p.lat,p.lng],{icon:ic}).addTo(g).on('click',()=>openPlace(i))});
- map.fitBounds(places.map(p=>[p.lat,p.lng]),{padding:[40,40],maxZoom:16});
+ if(pts.length&&!map._fit){map._fit=1;map.fitBounds(pts.map(p=>[p.lat,p.lng]),{padding:[40,40],maxZoom:16})}
+ $('nl').innerHTML=places.map((p,i)=>p.lat==null?`<button class="g" onclick="openPlace(${i})">${i+1}. ${p.name} (${p.items.length}개) · 위치 지정</button>`:'').join('');
  let h='<tr><th>날짜</th><th>시간</th><th>장소</th><th>해발</th><th>사진</th><th>영상</th></tr>';
- h+=`<tr><td>${fmtD(places[0].items[0].t)}</td><td>출발</td><td>${$('dep').value||'-'}</td><td></td><td></td><td></td></tr>`;
+ h+=`<tr><td>${fmtD(items[0].t)}</td><td>출발</td><td>${$('dep').value||'-'}</td><td></td><td></td><td></td></tr>`;
  places.forEach((p,i)=>{const k=p.items.filter(x=>x.keep);if(!k.length)return;
   h+=`<tr><td>${fmtD(k[0].t)}</td><td>${fmtT(k[0].t)}~${fmtT(k[k.length-1].t)}</td><td>${i+1}. ${p.name}</td><td>${isMt(p)?p.ele+'m':''}</td><td>${k.filter(x=>!x.video).length}</td><td>${k.filter(x=>x.video).length}</td></tr>`});
  const last=items[items.length-1];h+=`<tr><td>${fmtD(last.t)}</td><td>${fmtT(last.t)}</td><td>여행 종료/도착</td><td></td><td></td><td></td></tr>`;
  $('tb').innerHTML=h;}
 function openPlace(i){const p=places[i];
- let h=`<h3>${i+1}. ${p.name} ${isMt(p)?'⛰ 해발 '+p.ele+'m':''}</h3><div class="gal">`;
+ let h=`<h3>${i+1}. ${p.name} ${isMt(p)?'⛰ 해발 '+p.ele+'m':''}</h3><button onclick="pickLoc(${i})">📍 지도에서 위치 지정</button><button class="g" onclick="ren(${i})">✏️ 이름 변경</button><div class="gal" style="margin-top:8px">`;
  p.items.forEach((x,j)=>{h+=`<div class="${x.keep?'':'off'}">${x.video?`<video src="${x.url}" controls></video>`:`<img src="${x.url}">`}<br>${fmtT(x.t)}<br><label style="display:inline"><input type="checkbox" style="width:auto" ${x.keep?'checked':''} onchange="tog(${i},${j},this.checked)"> 사용</label>
-  ${x.video?`<br><select onchange="mv(${i},${j},this.value)">${places.map((q,k)=>`<option value="${k}" ${k==i?'selected':''}>${k+1}. ${q.name}</option>`).join('')}</select>`:''}</div>`});
+  <br><select onchange="mv(${i},${j},this.value)">${places.map((q,k)=>`<option value="${k}" ${k==i?'selected':''}>${k+1}. ${q.name}</option>`).join('')}</select></div>`});
  $('oin').innerHTML=h+'</div><button onclick="$(\'ov\').classList.add(\'hide\')">닫기</button>';$('ov').classList.remove('hide');}
+function pickLoc(i){pick=i;$('ov').classList.add('hide');$('msg').textContent='지도에서 이 장소의 위치를 탭하세요 (확대해서 정확히)';$('map').scrollIntoView()}
+function ren(i){const n=prompt('장소 이름',places[i].name);if(n){places[i].name=n;places[i].done=1;render();openPlace(i)}}
 function tog(i,j,v){places[i].items[j].keep=v;render();openPlace(i)}
 function mv(i,j,k){const x=places[i].items.splice(j,1)[0];x.place=places[k];places[k].items.push(x);places[k].items.sort((a,b)=>a.t-b.t);render();openPlace(+k)}
-function slides(){const s=[{u:coverUrl||(items.find(x=>!x.video)||{}).url,c:$('title').value+' · '+$('date').value,cover:1}];
- places.forEach(p=>p.items.filter(x=>!x.video&&x.keep).forEach(x=>s.push({u:x.url,c:`${p.name}${isMt(p)?' (해발 '+p.ele+'m)':''} · ${fmtD(x.t)} ${fmtT(x.t)}`})));return s}
-function play(){const s=slides();let n=0;$('show').classList.remove('hide');if($('au').src)$('au').play();
- const f=()=>{const x=s[n%s.length];$('si').src=x.u;$('cap').textContent=x.c;n++;if(n>s.length){stop();return}timer=setTimeout(f,x.cover?4000:3000)};f()}
-function stop(){clearTimeout(timer);$('show').classList.add('hide');$('au').pause()}
+function slides(){const s=[];const cu=coverUrl||(items.find(x=>!x.video)||{}).url;if(cu)s.push({u:cu,c:$('title').value+' · '+$('date').value,cover:1});
+ places.forEach(p=>p.items.filter(x=>x.keep).forEach(x=>s.push({u:x.url,v:x.video,c:`${p.name}${isMt(p)?' (해발 '+p.ele+'m)':''} · ${fmtD(x.t)} ${fmtT(x.t)}`})));return s}
+function eff(t,p){const e=1-Math.pow(1-p,3),o={a:1,x:0,y:0,s:1,r:0,sx:1,b:0,w:1};
+ switch(t){case 0:o.a=e;break;case 1:o.x=-(1-e);break;case 2:o.x=1-e;break;case 3:o.y=1-e;break;case 4:o.y=-(1-e);break;
+  case 5:o.s=.5+.5*e;o.a=e;break;case 6:o.s=1.6-.6*e;o.a=e;break;case 7:o.r=(1-e)*-.6;o.s=.5+.5*e;o.a=e;break;
+  case 8:o.sx=Math.max(e,.01);break;case 9:o.w=e;break;case 10:o.b=(1-e)*20;o.a=e;break}return o}
+function apply(el,o){el.style.opacity=o.a;el.style.transform=`translate(${o.x*100}%,${o.y*100}%) rotate(${o.r}rad) scale(${o.s*o.sx},${o.s})`;el.style.filter=o.b?`blur(${o.b}px)`:'none';el.style.clipPath=o.w<1?`inset(0 ${(1-o.w)*100}% 0 0)`:'none'}
+function drawEl(c,el,w,h,o){const r=Math.min(1280/w,720/h),dw=w*r,dh=h*r;c.save();c.globalAlpha=o.a;c.filter=o.b?`blur(${o.b}px)`:'none';
+ if(o.w<1){c.beginPath();c.rect(0,0,1280*o.w,720);c.clip()}
+ c.translate(640+o.x*1280,360+o.y*720);c.rotate(o.r);c.scale(o.s*o.sx,o.s);c.drawImage(el,-dw/2,-dh/2,dw,dh);c.restore()}
+function showSlide(x,my){return new Promise(res=>{
+ const im=$('si'),vd=$('sv'),el=x.v?vd:im;im.classList.add('hide');vd.classList.add('hide');vd.pause();
+ $('cap').textContent=x.c;const t=Math.floor(Math.random()*11);let go=0;
+ const start=()=>{if(go)return;go=1;el.classList.remove('hide');const t0=performance.now();
+  const loop=n=>{if(my!=tok)return res();const p=Math.min(1,(n-t0)/900);apply(el,eff(t,p));if(p<1)requestAnimationFrame(loop)};requestAnimationFrame(loop);
+  if(x.v){vd.play().catch(()=>{});vd.onended=()=>res();setTimeout(res,15000)}else setTimeout(res,x.cover?4000:3000)};
+ if(x.v){vd.muted=true;vd.onloadeddata=start;vd.onerror=()=>res();vd.src=x.u;vd.load()}else{im.onload=start;im.onerror=()=>res();im.src=x.u}
+ setTimeout(start,3000)})}
+async function play(){const s=slides();if(!s.length)return;const my=++tok;$('show').classList.remove('hide');if($('au').src)$('au').play();
+ for(const x of s){if(my!=tok)return;await showSlide(x,my)}if(my==tok)stop()}
+function stop(){tok++;$('show').classList.add('hide');$('au').pause();$('sv').pause()}
 async function rec(){
- const s=slides(),cv=document.createElement('canvas');cv.width=1280;cv.height=720;const c=cv.getContext('2d');
- const st=cv.captureStream(30);if($('au').src){try{$('au').currentTime=0;await $('au').play();st.addTrack($('au').captureStream().getAudioTracks()[0])}catch(_){}}
- const mr=new MediaRecorder(st,{mimeType:'video/webm'}),ch=[];mr.ondataavailable=e=>ch.push(e.data);
- mr.onstop=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(ch,{type:'video/webm'}));a.download=($('title').value||'travel')+'.webm';a.click();$('au').pause();$('msg').textContent='저장 완료'};
- mr.start();
- for(let i=0;i<s.length;i++){$('msg').textContent=`영상 생성 중 ${i+1}/${s.length}`;
-  const im=new Image();im.src=s[i].u;await im.decode();
-  const dur=s[i].cover?4000:3000,t0=performance.now();
-  while(performance.now()-t0<dur){c.fillStyle='#000';c.fillRect(0,0,1280,720);const r=Math.min(1280/im.width,720/im.height);
-   c.drawImage(im,(1280-im.width*r)/2,(720-im.height*r)/2,im.width*r,im.height*r);
-   c.fillStyle='#0009';c.fillRect(0,660,1280,60);c.fillStyle='#fff';c.font='28px sans-serif';c.textAlign='center';c.fillText(s[i].c,640,700);
-   await new Promise(r=>requestAnimationFrame(r))}}
- mr.stop();}
+ const s=slides();if(!s.length)return;
+ const mt=['video/webm;codecs=vp9','video/webm','video/mp4'].find(t=>MediaRecorder.isTypeSupported(t));
+ if(!mt){$('msg').textContent='이 브라우저는 영상 저장을 지원하지 않습니다. PC 크롬을 사용하세요.';return}
+ const cv=document.createElement('canvas');cv.width=1280;cv.height=720;const c=cv.getContext('2d');
+ const st=cv.captureStream(30);
+ if($('au').src){try{$('au').currentTime=0;await $('au').play();st.addTrack($('au').captureStream().getAudioTracks()[0])}catch(_){}}
+ const mr=new MediaRecorder(st,{mimeType:mt,videoBitsPerSecond:4e6}),ch=[];
+ mr.ondataavailable=e=>e.data.size&&ch.push(e.data);
+ mr.onstop=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(ch,{type:mt.split(';')[0]}));a.download=($('title').value||'travel')+(mt.includes('mp4')?'.mp4':'.webm');document.body.appendChild(a);a.click();a.remove();$('au').pause();$('msg').textContent='✅ 저장 완료 (다운로드 폴더 확인)'};
+ mr.start(1000);
+ for(let i=0;i<s.length;i++){const x=s[i],t=Math.floor(Math.random()*11);$('msg').textContent=`영상 생성 중 ${i+1}/${s.length} (화면을 켜두세요)`;
+  let el,w,h;
+  if(x.v){el=document.createElement('video');el.muted=true;el.playsInline=true;el.src=x.u;await new Promise(r=>{el.onloadeddata=r;el.onerror=r});w=el.videoWidth;h=el.videoHeight;el.play().catch(()=>{})}
+  else{el=new Image();el.src=x.u;try{await el.decode()}catch(_){}w=el.naturalWidth;h=el.naturalHeight}
+  if(!w)continue;
+  const dur=x.v?Math.min(15000,(el.duration||5)*1000):(x.cover?4000:3000),t0=performance.now();
+  while(performance.now()-t0<dur){const p=Math.min(1,(performance.now()-t0)/900);
+   c.fillStyle='#000';c.fillRect(0,0,1280,720);drawEl(c,el,w,h,eff(t,p));
+   c.fillStyle='#0009';c.fillRect(0,660,1280,60);c.fillStyle='#fff';c.font='28px sans-serif';c.textAlign='center';c.fillText(x.c,640,700);
+   await new Promise(r=>requestAnimationFrame(r))}
+  if(x.v)el.pause()}
+ await sleep(300);mr.stop()}
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js');
 </script></body></html>
