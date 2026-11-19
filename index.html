@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="manifest" href="manifest.json"><meta name="theme-color" content="#2b7a4b"><title>나의 여행·등산 기록지</title>
+<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="manifest" href="manifest.json"><meta name="theme-color" content="#2b7a4b"><meta name="referrer" content="strict-origin-when-cross-origin"><title>나의 여행·등산 기록지</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
 body{margin:0;font-family:system-ui,'Malgun Gothic',sans-serif;background:#f4f6f8;color:#222}
@@ -23,7 +23,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{border-bottom:1px
 #show img,#show video{max-width:100%;max-height:88vh}
 #cap{position:fixed;bottom:12px;width:100%;font-size:18px}
 </style></head><body><div class="wrap">
-<div id="setup" class="card"><h2>나의 여행 및 등산 기록지</h2>
+<div id="setup" class="card"><h2>나의 여행 및 등산 기록지 <small style="font-size:12px;color:#888">v3</small></h2>
 <label>목적(제목)</label><input id="title" value="속리산등반">
 <label>일시 (출발일)</label><input id="date" type="date">
 <label>동반자 (쉼표로 구분, 이름 개수 = 인원)</label><input id="mates" placeholder="구주연, ...">
@@ -32,7 +32,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{border-bottom:1px
 <label>숙박지</label><input id="stay" value="없음">
 <label>표지(대표) 이미지</label><input id="cover" type="file" accept="image/*">
 <label>슬라이드쇼 음악 (선택)</label><input id="music" type="file" accept="audio/*">
-<label>여행 사진·영상 (여러 개 선택)</label><input id="files" type="file" accept="image/*,video/*" multiple>
+<label>① 여행 사진·영상 (갤러리 선택 — 폰에서는 위치정보가 지워질 수 있음)</label><input id="files" type="file" accept="image/*,video/*" multiple><label>② 원본 파일로 선택 (위치정보 유지 · 폰은 "파일/내 파일 → DCIM/Camera"에서 고르기)</label><input id="files2" type="file" multiple>
 <button onclick="build()">기록 만들기</button></div>
 
 <div id="main" class="hide">
@@ -58,15 +58,16 @@ function dist(a,b){const R=6371000,r=Math.PI/180,dl=(b.lat-a.lat)*r,dn=(b.lng-a.
 let pick=null,tok=0;
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function build(){
- const fs=[...$('files').files];if(!fs.length){alert('사진을 선택하세요');return}
+ const seen=new Set(),fs=[...$('files').files,...$('files2').files].filter(f=>{const k=f.name+f.size+f.lastModified;if(seen.has(k))return false;seen.add(k);return /^(image|video)\//.test(f.type)||/\.(jpe?g|png|heic|heif|webp|mp4|mov|3gp)$/i.test(f.name)});if(!fs.length){alert('사진을 선택하세요');return}
  $('setup').classList.add('hide');$('main').classList.remove('hide');$('msg').textContent='사진 정보 읽는 중...';
  if($('cover').files[0])coverUrl=URL.createObjectURL($('cover').files[0]);
  if($('music').files[0])$('au').src=URL.createObjectURL($('music').files[0]);
  items=[];
- for(const f of fs){const it={file:f,url:URL.createObjectURL(f),video:f.type.startsWith('video'),t:f.lastModified,keep:true};
+ for(const f of fs){const it={file:f,url:URL.createObjectURL(f),video:f.type.startsWith('video')||/\.(mp4|mov|3gp)$/i.test(f.name),t:f.lastModified,keep:true};
   const m=f.name.match(/(20\d\d)(\d\d)(\d\d)[_-]?(\d\d)(\d\d)(\d\d)/);if(m)it.t=+new Date(m[1],m[2]-1,m[3],m[4],m[5],m[6]);
-  if(!it.video){try{const e=await exifr.parse(f,{gps:true,pick:['DateTimeOriginal','CreateDate','GPSAltitude']});
-   if(e){const d=e.DateTimeOriginal||e.CreateDate;if(d)it.t=+new Date(d);if(e.latitude!=null){it.lat=e.latitude;it.lng=e.longitude;it.alt=e.GPSAltitude}}}catch(_){}}
+  if(!it.video){try{const g=await exifr.gps(f);if(g&&g.latitude!=null){it.lat=g.latitude;it.lng=g.longitude}}catch(_){}
+   try{const e=await exifr.parse(f,['DateTimeOriginal','CreateDate','GPSAltitude']);if(e){const d=e.DateTimeOriginal||e.CreateDate;if(d)it.t=+new Date(d);if(e.GPSAltitude!=null)it.alt=e.GPSAltitude}}catch(_){}}
+  else{try{const g=await vidGps(f);if(g){it.lat=g[0];it.lng=g[1]}}catch(_){}}
   items.push(it)}
  items.sort((a,b)=>a.t-b.t);places=[];let cur=null;
  for(const it of items){const gp=it.lat!=null;
@@ -76,8 +77,8 @@ async function build(){
  places.forEach(p=>{const g=p.items.filter(x=>x.lat!=null);if(g.length){p.lat=g.reduce((s,x)=>s+x.lat,0)/g.length;p.lng=g.reduce((s,x)=>s+x.lng,0)/g.length}});
  render();hint();await names();hint();
 }
-function hint(){const n=items.filter(x=>x.lat==null).length;
- $('msg').textContent=n?`위치정보 없는 파일 ${n}개 (시간순으로 묶었습니다). 아래 '위치 지정' 버튼 → 지도 탭으로 직접 위치를 지정할 수 있어요. 원본 GPS를 쓰려면 안드로이드는 사진 선택 시 '파일/문서'로 고르세요.`:''}
+function hint(){const n=items.filter(x=>x.lat==null).length,g=items.length-n;
+ $('msg').textContent=`위치정보 읽음 ${g}개 / 없음 ${n}개.`+(n?` 없는 파일은 시간순으로 묶었고, 아래 '위치 지정'으로 직접 지정할 수 있어요. 갤러리 선택은 위치를 지우니, 처음 화면의 '원본 파일로 선택'을 쓰세요.`:'')}
 async function locate(p){
  try{const r=await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&zoom=17&accept-language=ko&lat=${p.lat}&lon=${p.lng}`);const d=await r.json();const a=d.address||{};
   p.name=d.name||a.tourism||a.natural||a.leisure||a.amenity||a.road||a.suburb||(d.display_name||'').split(',')[0]||'장소'}catch(_){}
@@ -89,7 +90,7 @@ function render(){
  $('h').textContent='📖 '+$('title').value;
  const m=$('mates').value.split(/[,，、\s]+/).filter(Boolean);
  $('sub').textContent=`${$('date').value} · ${$('dur').value} · 동반 ${m.length}명${m.length?'('+m.join(', ')+')':''} · 출발: ${$('dep').value} · 숙박: ${$('stay').value}`;
- if(!map){map=L.map('map').setView([36.5,127.8],7);L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap',maxZoom:19}).addTo(map);
+ if(!map){map=L.map('map').setView([36.5,127.8],7);const bl={'기본(CARTO)':L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{subdomains:'abcd',attribution:'© OpenStreetMap © CARTO',maxZoom:19}),'위성(Esri)':L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{attribution:'Esri',maxZoom:18}),'지형(OpenTopoMap)':L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{subdomains:'abc',attribution:'© OpenTopoMap',maxZoom:17})};bl['기본(CARTO)'].addTo(map);L.control.layers(bl).addTo(map);
   map.on('click',async e=>{if(pick==null)return;const p=places[pick];pick=null;p.lat=e.latlng.lat;p.lng=e.latlng.lng;p.hasGps=1;p.done=1;p.items.forEach(x=>{x.lat=p.lat;x.lng=p.lng});
    $('msg').textContent='장소 확인 중...';await locate(p);render();hint()})}
  if(map._g)map._g.remove();const g=L.layerGroup().addTo(map);map._g=g;
@@ -127,14 +128,17 @@ function apply(el,o){el.style.opacity=o.a;el.style.transform=`translate(${o.x*10
 function drawEl(c,el,w,h,o){const r=Math.min(1280/w,720/h),dw=w*r,dh=h*r;c.save();c.globalAlpha=o.a;c.filter=o.b?`blur(${o.b}px)`:'none';
  if(o.w<1){c.beginPath();c.rect(0,0,1280*o.w,720);c.clip()}
  c.translate(640+o.x*1280,360+o.y*720);c.rotate(o.r);c.scale(o.s*o.sx,o.s);c.drawImage(el,-dw/2,-dh/2,dw,dh);c.restore()}
-function showSlide(x,my){return new Promise(res=>{
+async function showSlide(x,my){
  const im=$('si'),vd=$('sv'),el=x.v?vd:im;im.classList.add('hide');vd.classList.add('hide');vd.pause();
- $('cap').textContent=x.c;const t=Math.floor(Math.random()*11);let go=0;
- const start=()=>{if(go)return;go=1;el.classList.remove('hide');const t0=performance.now();
-  const loop=n=>{if(my!=tok)return res();const p=Math.min(1,(n-t0)/900);apply(el,eff(t,p));if(p<1)requestAnimationFrame(loop)};requestAnimationFrame(loop);
-  if(x.v){vd.play().catch(()=>{});vd.onended=()=>res();setTimeout(res,15000)}else setTimeout(res,x.cover?4000:3000)};
- if(x.v){vd.muted=true;vd.onloadeddata=start;vd.onerror=()=>res();vd.src=x.u;vd.load()}else{im.onload=start;im.onerror=()=>res();im.src=x.u}
- setTimeout(start,3000)})}
+ $('cap').textContent=x.c;const t=Math.floor(Math.random()*11);
+ try{if(x.v){vd.muted=true;vd.src=x.u;await Promise.race([new Promise(r=>{vd.onloadeddata=r;vd.onerror=r}),sleep(4000)])}
+  else{im.src=x.u;await im.decode()}}catch(_){return}
+ apply(el,eff(t,0));el.classList.remove('hide');
+ if(x.v)vd.play().catch(()=>{});
+ const total=x.v?Math.min(15000,(vd.duration||5)*1000):(x.cover?4000:3000),t0=performance.now();
+ while(performance.now()-t0<total){if(my!=tok)return;apply(el,eff(t,Math.min(1,(performance.now()-t0)/900)));await new Promise(r=>requestAnimationFrame(r))}}
+async function vidGps(f){const rd=b=>new Promise(r=>{const x=new FileReader();x.onload=()=>r(x.result);x.readAsBinaryString(b)});
+ for(const b of [f.slice(0,3e6),f.slice(Math.max(0,f.size-3e6))]){const s=await rd(b);const m=s.match(/\xA9xyz[\s\S]{0,6}?([+-]\d+\.\d+)([+-]\d+\.\d+)/);if(m)return[+m[1],+m[2]]}return null}
 async function play(){const s=slides();if(!s.length)return;const my=++tok;$('show').classList.remove('hide');if($('au').src)$('au').play();
  for(const x of s){if(my!=tok)return;await showSlide(x,my)}if(my==tok)stop()}
 function stop(){tok++;$('show').classList.add('hide');$('au').pause();$('sv').pause()}
